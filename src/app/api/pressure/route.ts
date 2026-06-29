@@ -21,12 +21,11 @@ export const revalidate = 0;
 
 type FmpGainer = {
   symbol?: string;
-  ticker?: string;
   name?: string;
-  companyName?: string;
   price?: number;
-  changesPercentage?: number;
   change?: number;
+  changesPercentage?: number;
+  changePercentage?: number;
   volume?: number;
 };
 
@@ -34,8 +33,10 @@ type FmpQuote = {
   symbol?: string;
   name?: string;
   price?: number;
+  changePercentage?: number;
   changesPercentage?: number;
   change?: number;
+  volume?: number;
   dayLow?: number;
   dayHigh?: number;
   yearHigh?: number;
@@ -44,13 +45,8 @@ type FmpQuote = {
   priceAvg50?: number;
   priceAvg200?: number;
   exchange?: string;
-  volume?: number;
-  avgVolume?: number;
   open?: number;
   previousClose?: number;
-  eps?: number;
-  pe?: number;
-  earningsAnnouncement?: string;
   sharesOutstanding?: number;
   timestamp?: number;
 };
@@ -78,10 +74,21 @@ function cleanSymbol(value: unknown): string | null {
 function inferSymbolType(symbol: string): SymbolType {
   const s = symbol.toUpperCase();
 
-  if (s.includes(".WS") || s.endsWith("WS") || s.endsWith("W")) return "WARRANT";
-  if (s.includes(".U") || s.endsWith("U")) return "UNIT";
-  if (s.includes(".P") || s.includes("-P") || s.includes("PR")) return "PREFERRED";
-  if (s.includes("ETF")) return "ETF";
+  if (s.includes(".WS") || s.endsWith("WS") || s.endsWith("W")) {
+    return "WARRANT";
+  }
+
+  if (s.includes(".U") || s.endsWith("U")) {
+    return "UNIT";
+  }
+
+  if (s.includes(".P") || s.includes("-P") || s.includes("PR")) {
+    return "PREFERRED";
+  }
+
+  if (s.includes("ETF")) {
+    return "ETF";
+  }
 
   return "COMMON";
 }
@@ -151,19 +158,6 @@ function classifyNews(news?: FmpNewsItem): {
     "positive data",
   ];
 
-  const dirtyWords = [
-    "offering",
-    "registered direct",
-    "atm",
-    "at-the-market",
-    "reverse split",
-    "delisting",
-    "nasdaq notice",
-    "warrant",
-    "convertible",
-    "dilution",
-  ];
-
   if (majorWords.some((word) => lower.includes(word))) {
     catalystStrength = "MAJOR";
   }
@@ -176,7 +170,11 @@ function classifyNews(news?: FmpNewsItem): {
     dirtyCatalystRisk = "REVERSE_SPLIT_ONLY";
   } else if (lower.includes("delisting") || lower.includes("nasdaq notice")) {
     dirtyCatalystRisk = "DELISTING_WARNING";
-  } else if (dirtyWords.some((word) => lower.includes(word))) {
+  } else if (
+    lower.includes("warrant") ||
+    lower.includes("convertible") ||
+    lower.includes("dilution")
+  ) {
     dirtyCatalystRisk = "DILUTION_HEAVY_FILING";
   }
 
@@ -188,36 +186,49 @@ function classifyNews(news?: FmpNewsItem): {
 }
 
 async function fetchFmpGainers(apiKey: string) {
-  const url = `https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${apiKey}`;
-  const response = await fetch(url, { cache: "no-store" });
+  const url = `https://financialmodelingprep.com/stable/biggest-gainers?apikey=${apiKey}`;
+
+  const response = await fetch(url, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
-    throw new Error(`FMP gainers error: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `FMP stable gainers error: ${response.status} ${await response.text()}`
+    );
   }
 
   return (await response.json()) as FmpGainer[];
 }
 
-async function fetchFmpQuotes(apiKey: string, symbols: string[]) {
-  if (!symbols.length) return [];
+async function fetchFmpQuote(apiKey: string, symbol: string) {
+  const url = `https://financialmodelingprep.com/stable/quote?symbol=${encodeURIComponent(
+    symbol
+  )}&apikey=${apiKey}`;
 
-  const joined = symbols.join(",");
-  const url = `https://financialmodelingprep.com/api/v3/quote/${joined}?apikey=${apiKey}`;
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
-    throw new Error(`FMP quote error: ${response.status} ${await response.text()}`);
+    return null;
   }
 
-  return (await response.json()) as FmpQuote[];
+  const data = (await response.json()) as FmpQuote[] | FmpQuote;
+
+  if (Array.isArray(data)) {
+    return data[0] ?? null;
+  }
+
+  return data ?? null;
 }
 
-async function fetchFmpNews(apiKey: string, symbols: string[]) {
-  if (!symbols.length) return new Map<string, FmpNewsItem>();
+async function fetchFmpNews(apiKey: string) {
+  const url = `https://financialmodelingprep.com/stable/news/stock-latest?page=0&limit=100&apikey=${apiKey}`;
 
-  const joined = symbols.slice(0, 50).join(",");
-  const url = `https://financialmodelingprep.com/api/v3/stock_news?tickers=${joined}&limit=100&apikey=${apiKey}`;
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(url, {
+    cache: "no-store",
+  });
 
   if (!response.ok) {
     return new Map<string, FmpNewsItem>();
@@ -243,6 +254,10 @@ export async function GET() {
       return NextResponse.json(
         {
           ok: false,
+          generatedAt: new Date().toISOString(),
+          dataMode: "FMP_ONLY",
+          count: 0,
+          results: [],
           error: "Missing FMP_API_KEY environment variable.",
         },
         { status: 500 }
@@ -252,36 +267,33 @@ export async function GET() {
     const gainers = await fetchFmpGainers(apiKey);
 
     const symbols = gainers
-      .map((gainer) => cleanSymbol(gainer.symbol ?? gainer.ticker))
+      .map((gainer) => cleanSymbol(gainer.symbol))
       .filter((symbol): symbol is string => Boolean(symbol))
       .filter((symbol) => inferSymbolType(symbol) === "COMMON")
-      .slice(0, 80);
+      .slice(0, 50);
 
-    const [quotes, newsMap] = await Promise.all([
-      fetchFmpQuotes(apiKey, symbols),
-      fetchFmpNews(apiKey, symbols),
-    ]);
+    const newsMap = await fetchFmpNews(apiKey);
 
-    const quoteMap = new Map<string, FmpQuote>();
+    const quotePairs = await Promise.all(
+      symbols.map(async (symbol) => {
+        const quote = await fetchFmpQuote(apiKey, symbol);
+        return [symbol, quote] as const;
+      })
+    );
 
-    for (const quote of quotes) {
-      const symbol = cleanSymbol(quote.symbol);
-      if (symbol) quoteMap.set(symbol, quote);
-    }
+    const quoteMap = new Map<string, FmpQuote | null>(quotePairs);
 
     const results = symbols.map((symbol) => {
       const quote = quoteMap.get(symbol);
+      const gainer = gainers.find((item) => cleanSymbol(item.symbol) === symbol);
       const news = newsMap.get(symbol);
       const catalyst = classifyNews(news);
 
       const context = getSnapshotContext(symbol);
       const secondsBetweenScans = getSecondsBetweenScans(symbol);
 
-      const price = quote?.price ?? null;
-      const volume = quote?.volume ?? null;
-
-      const previousRecentHigh = context.previousSnapshotPrice ?? null;
-      const previousRecentLow = context.previousSnapshotPrice ?? null;
+      const price = quote?.price ?? gainer?.price ?? null;
+      const volume = quote?.volume ?? gainer?.volume ?? null;
 
       const nearestSupport = quote ? estimateSupport(quote) : null;
 
@@ -307,8 +319,8 @@ export async function GET() {
 
         recentHigh: quote?.dayHigh ?? price,
         recentLow: quote?.dayLow ?? price,
-        previousRecentHigh,
-        previousRecentLow,
+        previousRecentHigh: context.previousSnapshotPrice,
+        previousRecentLow: context.previousSnapshotPrice,
 
         vwap: null,
         recentBreakoutLevel: quote?.dayHigh ?? null,
@@ -337,7 +349,9 @@ export async function GET() {
       return output;
     });
 
-    const ranked = results.sort((a, b) => b.runnerPressureScore - a.runnerPressureScore);
+    const ranked = results.sort(
+      (a, b) => b.runnerPressureScore - a.runnerPressureScore
+    );
 
     const response: RankedPressureResponse = {
       ok: true,

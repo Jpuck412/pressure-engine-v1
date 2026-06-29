@@ -133,4 +133,66 @@ export type PressureEngineCalculations = {
 
   higherHigh: boolean;
   higherLow: boolean;
-  lower
+  lowerHigh: boolean;
+  priceAboveVWAP: boolean;
+  reclaimingRecentBreakoutLevel: boolean;
+
+  rawSpread: number | null;
+  spreadPct: number | null;
+
+  distanceFromSupportPct: number | null;
+  extensionFromSupportPct: number | null;
+};
+
+export type PressureEngineOutput = {
+  symbol: string;
+
+  price: number | null;
+  previousClose: number | null;
+  currentVolume: number | null;
+
+  bid: number | null;
+  ask: number | null;
+
+  nearestSupport: number | null;
+  invalidationLevel: number | null;
+
+  floatShares: number | null;
+
+  catalystLabel: string | null;
+  catalystStrength: CatalystStrength;
+  dirtyCatalystRisk: DirtyCatalystRisk;
+
+  calculations: PressureEngineCalculations;
+  scores: PressureScoreBreakdown;
+
+  runnerPressureScore: number;
+  verdict: PressureVerdict;
+  permissionStatus: PermissionStatus;
+
+  liquidityConfidence: LiquidityConfidence;
+  dataFreshness: DataFreshness;
+
+  hardRejected: boolean;
+  hardRejectReasons: string[];
+
+  reasons: string[];
+  warnings: string[];
+  proofNeeded: string;
+};
+
+export type SnapshotRecord = {
+  symbol: string;
+  price: number | null;
+  volume: number | null;
+  timestamp: number;
+};
+
+export type RankedPressureResponse = {
+  ok: boolean;
+  generatedAt: string;
+  dataMode: DataMode;
+  count: number;
+  results: PressureEngineOutput[];
+  error?: string;
+};

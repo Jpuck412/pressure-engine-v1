@@ -7,12 +7,11 @@ export const revalidate = 0;
 
 type FmpGainer = {
   symbol?: string;
-  ticker?: string;
   name?: string;
-  companyName?: string;
   price?: number;
-  changesPercentage?: number;
   change?: number;
+  changesPercentage?: number;
+  changePercentage?: number;
   volume?: number;
 };
 
@@ -41,7 +40,7 @@ export async function GET() {
       );
     }
 
-    const url = `https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${apiKey}`;
+    const url = `https://financialmodelingprep.com/stable/biggest-gainers?apikey=${apiKey}`;
 
     const response = await fetch(url, {
       cache: "no-store",
@@ -49,10 +48,11 @@ export async function GET() {
 
     if (!response.ok) {
       const text = await response.text();
+
       return NextResponse.json(
         {
           ok: false,
-          error: `FMP gainers error: ${response.status}`,
+          error: `FMP stable gainers error: ${response.status}`,
           detail: text,
         },
         { status: response.status }
@@ -63,15 +63,16 @@ export async function GET() {
 
     const gainers = raw
       .map((item) => {
-        const symbol = cleanSymbol(item.symbol ?? item.ticker);
+        const symbol = cleanSymbol(item.symbol);
 
         if (!symbol) return null;
 
         return {
           symbol,
-          name: item.name ?? item.companyName ?? null,
+          name: item.name ?? null,
           price: item.price ?? null,
-          changesPercentage: item.changesPercentage ?? null,
+          changesPercentage:
+            item.changesPercentage ?? item.changePercentage ?? null,
           change: item.change ?? null,
           volume: item.volume ?? null,
         };
